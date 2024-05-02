@@ -41,10 +41,11 @@ impl MerkleTree {
                 right: None,
             }
         }).collect::<Vec<MerkleTree>>();
-        
+
         MerkleTree::construct_tree(nodes)
     }
 
+    /// Constructs a Merkle tree from a list of nodes
     fn construct_tree(mut nodes: Vec<MerkleTree>) -> MerkleTree {
         while nodes.len() > 1 {
             let mut parent_nodes = Vec::new();
@@ -77,17 +78,61 @@ impl MerkleTree {
 
     /// Verifies that the given input data produces the given root hash
     pub fn verify(input: &[Data], root_hash: &Hash) -> bool {
-        todo!("Exercise 1b")
+        let tree = MerkleTree::construct(input);
+        tree.root() == *root_hash
     }
 
     /// Verifies that the given data and proof_path correctly produce the given root_hash
     pub fn verify_proof(data: &Data, proof: &Proof, root_hash: &Hash) -> bool {
-        todo!("Exercise 2")
+        let mut hash = hash_data(data);
+
+        for (direction, sibling_hash) in &proof.hashes {
+            hash = match direction {
+                HashDirection::Left => hash_concat(sibling_hash, &hash),
+                HashDirection::Right => hash_concat(&hash, sibling_hash),
+            };
+        }
+
+        hash == *root_hash
     }
 
     /// Returns a list of hashes that can be used to prove that the given data is in this tree
-    pub fn prove(&self, data: &Data) -> Option<Proof> {
-        todo!("Exercise 3")
+    pub fn prove<'a>(&'a self, data: &Data) -> Option<Proof<'a>> {
+        let mut proof = Proof::default();
+        if self.prove_recursive(data, &mut proof) {
+            Some(proof)
+        } else {
+            None
+        }
+    }
+
+    /// Recursively tries to prove that the given data is in this tree and adds the hashes to the proof
+    fn prove_recursive<'a>(&'a self, data: &Data, proof: &mut Proof<'a>) -> bool {
+        if self.left.is_none() && self.right.is_none() {
+            return &hash_data(data) == &self.hash;
+        }
+
+        if let Some(ref left) = self.left {
+            if left.prove_recursive(data, proof) {
+                // If the data is in the left subtree, add the hash of the right subtree to the proof, if it exists
+                if let Some(ref right) = self.right {
+                    proof.hashes.push((HashDirection::Right, &right.hash));
+                }
+                return true;
+            }
+        }
+
+        if let Some(ref right) = self.right {
+            if right.prove_recursive(data, proof) {
+                // If the data is in the right subtree, add the hash of the left subtree to the proof
+                if let Some(ref left) = self.left {
+                    proof.hashes.push((HashDirection::Left, &left.hash));
+                }
+                return true;
+            }
+        }
+
+        false
     }
 }
 
@@ -129,5 +174,42 @@ mod tests {
         let tree = MerkleTree::construct(&data);
         let expected_root = "0727b310f87099c1ba2ec0ba408def82c308237c8577f0bdfd2643e9cc6b7578";
         assert_eq!(hex::encode(tree.root()), expected_root);
+    }
+
+    #[test]
+    fn test_verification() {
+        let data = example_data(3);
+        let tree = MerkleTree::construct(&data);
+        let root = tree.root();
+        assert!(MerkleTree::verify(&data, &root));
+
+        // test with invalid root
+        let data = example_data(4);
+        let tree = MerkleTree::construct(&data);
+        let root = vec![0; 32];
+        assert!(!MerkleTree::verify(&data, &root));
+    }
+
+    #[test]
+    fn test_proofs() {
+        let data = example_data(4);
+        let tree = MerkleTree::construct(&data);
+        let proof = tree.prove(&data[2]).unwrap();
+        let root = tree.root();
+        assert!(MerkleTree::verify_proof(&data[2], &proof, &root));
+
+        // test with invalid root
+        let data = example_data(4);
+        let tree = MerkleTree::construct(&data);
+        let proof = tree.prove(&data[2]).unwrap();
+        let root = vec![0; 32];
+        assert!(!MerkleTree::verify_proof(&data[2], &proof, &root));
+
+        // test with invalid data
+        let data = example_data(4);
+        let tree = MerkleTree::construct(&data);
+        let proof = tree.prove(&data[2]).unwrap();
+        let root = tree.root();
+        assert!(!MerkleTree::verify_proof(&data[3], &proof, &root));
     }
 }
